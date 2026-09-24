@@ -17,7 +17,8 @@ def test_code_spans_are_not_formatted():
 def test_whatsapp_formatting():
     out = to_whatsapp("## Heading\n**bold** and *italic*\n- point [link](https://x.org)")
     assert "*Heading*" in out
-    assert "*bold*" in out and "_italic_" in out
+    assert "*bold* and _italic_" in out
+    assert "_*" not in out
     assert "• point link (https://x.org)" in out
 
 

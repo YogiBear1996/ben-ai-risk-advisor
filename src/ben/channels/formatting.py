@@ -73,8 +73,10 @@ def to_whatsapp(text: str) -> str:
     text = _HEADING.sub(r"**\1**", text)
     text = _BULLET.sub(r"\1• ", text)
     text = _LINK.sub(r"\1 (\2)", text)
+    # Bold first (via a placeholder) so `**x**` isn't mistaken for italics.
+    text = _BOLD.sub(lambda m: f"\x01{m.group(1) or m.group(2)}\x01", text)
     text = _ITALIC.sub(lambda m: f"_{m.group(1) or m.group(2)}_", text)
-    text = _BOLD.sub(lambda m: f"*{m.group(1) or m.group(2)}*", text)
+    text = text.replace("\x01", "*")
     return re.sub(r"\x00(\d+)\x00", lambda m: f"`{codes[int(m.group(1))]}`", text)
 
 

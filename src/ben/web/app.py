@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 
 from ben.channels.base import ChannelAdapter
+from ben.channels.whatsapp import verify_signature
 from ben.config import Settings, get_settings
 from ben.core.models import IncomingMessage
 from ben.core.service import BenService
@@ -64,12 +67,19 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        from ben.runtime import build_service, build_telegram_adapter, configure_logging
+        from ben.runtime import (
+            build_service,
+            build_telegram_adapter,
+            build_whatsapp_adapter,
+            configure_logging,
+        )
 
         configure_logging(settings)
         state = AppState(settings, service or build_service(settings), dict(adapters or {}))
         if "telegram" not in state.adapters and settings.telegram_bot_token:
             state.adapters["telegram"] = await build_telegram_adapter(settings)
+        if "whatsapp" not in state.adapters and settings.whatsapp_access_token:
+            state.adapters["whatsapp"] = build_whatsapp_adapter(settings)
         if not settings.telegram_allowed_user_ids and not settings.whatsapp_allowed_numbers:
             log.warning("Allowlists are empty - every Telegram/WhatsApp user will be refused")
         scheduler = start_retention_scheduler(settings)
@@ -79,6 +89,9 @@ def create_app(
         tg = state.adapters.get("telegram")
         if tg is not None and hasattr(tg, "bot") and hasattr(tg.bot, "shutdown"):
             await tg.bot.shutdown()
+        wa = state.adapters.get("whatsapp")
+        if wa is not None and hasattr(wa, "aclose"):
+            await wa.aclose()
 
     app = FastAPI(title="Ben", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None)
 
@@ -105,6 +118,40 @@ def create_app(
         payload = await request.json()
         for msg in adapter.parse_incoming(payload):
             # Reply after returning 200 so Telegram doesn't retry slow answers.
+            background.add_task(process_message, state, adapter, msg)
+        return {"ok": True}
+
+    @app.get("/webhooks/whatsapp")
+    async def whatsapp_verify(request: Request) -> PlainTextResponse:
+        """Meta's one-time verify-token handshake when the webhook is registered."""
+        state: AppState = request.app.state.ben
+        params = request.query_params
+        if params.get("hub.mode") == "subscribe" and _secret_matches(
+            state.settings.whatsapp_verify_token, params.get("hub.verify_token")
+        ):
+            return PlainTextResponse(params.get("hub.challenge", ""))
+        raise HTTPException(403, "Verification failed")
+
+    @app.post("/webhooks/whatsapp")
+    async def whatsapp_webhook(request: Request, background: BackgroundTasks) -> dict:
+        state: AppState = request.app.state.ben
+        adapter = state.adapters.get("whatsapp")
+        if adapter is None:
+            raise HTTPException(404, "WhatsApp is not configured")
+        body = await request.body()
+        secret = state.settings.whatsapp_app_secret
+        if not verify_signature(
+            secret.get_secret_value() if secret else "",
+            body,
+            request.headers.get("X-Hub-Signature-256"),
+        ):
+            log.warning("Rejected WhatsApp webhook with invalid signature")
+            raise HTTPException(401, "Invalid signature")
+        try:
+            payload = json.loads(body)
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid JSON") from exc
+        for msg in adapter.parse_incoming(payload):
             background.add_task(process_message, state, adapter, msg)
         return {"ok": True}
 
