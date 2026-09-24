@@ -180,5 +180,64 @@ def cleanup() -> None:
     )
 
 
+@app.command("eval")
+def eval_(
+    questions: Path = typer.Option(Path("evals/questions.yaml"), help="Eval set (YAML)."),
+    retrieval_only: bool = typer.Option(
+        False, "--retrieval-only", help="Only check retrieval; no model calls."
+    ),
+    judge: bool = typer.Option(False, "--judge", help="Also grade groundedness with Claude."),
+    only: list[str] = typer.Option(None, "--only", help="Run only these question IDs."),
+    out: Path = typer.Option(None, help="JSON report path (default: reports/eval-<time>.json)."),
+) -> None:
+    """Run the eval set and report citation accuracy and groundedness."""
+    from rich.table import Table
+
+    from ben.evals import runner
+
+    settings = get_settings()
+    configure_logging(settings)
+    cases = runner.load_cases(questions)
+    if only:
+        cases = [c for c in cases if c.id in set(only)]
+    library = build_library(settings)
+    if not library.list_frameworks():
+        console.print("[red]Library is empty - run `ben ingest` first.[/red]")
+        raise typer.Exit(1)
+
+    if not retrieval_only and settings.anthropic_api_key is None:
+        console.print("[yellow]ANTHROPIC_API_KEY not set - running retrieval-only.[/yellow]")
+        retrieval_only = True
+    mode = "retrieval" if retrieval_only else "full"
+
+    def progress(r: runner.CaseResult) -> None:
+        mark = "[green]PASS[/green]" if r.passed else "[red]FAIL[/red]"
+        console.print(
+            f"{mark} {r.id}" + (f"  [dim]{'; '.join(r.missing)}[/dim]" if r.missing else "")
+        )
+
+    if retrieval_only:
+        results = runner.run_retrieval_only(cases, library, settings.retrieval_top_k, progress)
+        model = None
+    else:
+        from ben.runtime import build_agent
+
+        agent = build_agent(settings, library=library)
+        results = runner.run_full(cases, agent, judge=judge, on_result=progress)
+        model = settings.ben_model
+
+    summary = runner.summarise(results, mode, model)
+    table = Table(title=f"Ben eval ({mode})")
+    table.add_column("Metric")
+    table.add_column("Value", justify="right")
+    for key, value in summary.items():
+        table.add_row(key, str(value))
+    console.print(table)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    report = out or Path("reports") / f"eval-{mode}-{stamp}.json"
+    runner.write_report(report, summary, results)
+    console.print(f"Report written to {report}")
+
+
 if __name__ == "__main__":
     app()
