@@ -72,7 +72,8 @@ class Settings(BaseSettings):
     rate_limit_burst: int = 5
     redact_before_logging: bool = True
     redact_before_model: bool = False
-    retention_days: int = 90
+    retention_days: int = 90  # conversations/messages; 0 disables cleanup
+    audit_retention_days: int = 365  # audit log; 0 keeps it forever
     cleanup_hour_utc: int = 3
     log_level: str = "INFO"
 

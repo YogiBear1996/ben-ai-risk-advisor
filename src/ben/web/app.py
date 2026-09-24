@@ -7,12 +7,14 @@ import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from ben.channels.base import ChannelAdapter
 from ben.config import Settings, get_settings
 from ben.core.models import IncomingMessage
 from ben.core.service import BenService
+from ben.storage.repo import run_retention
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +42,19 @@ async def process_message(state: AppState, adapter: ChannelAdapter, msg: Incomin
         log.exception("Failed to process %s message", msg.channel)
 
 
+def start_retention_scheduler(settings: Settings) -> AsyncIOScheduler:
+    """Daily cleanup of old conversations and audit entries."""
+
+    def job() -> None:
+        removed = run_retention(settings)
+        log.info("Retention cleanup removed %s", removed)
+
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler.add_job(job, "cron", hour=settings.cleanup_hour_utc, minute=0, id="retention")
+    scheduler.start()
+    return scheduler
+
+
 def create_app(
     settings: Settings | None = None,
     service: BenService | None = None,
@@ -55,8 +70,12 @@ def create_app(
         state = AppState(settings, service or build_service(settings), dict(adapters or {}))
         if "telegram" not in state.adapters and settings.telegram_bot_token:
             state.adapters["telegram"] = await build_telegram_adapter(settings)
+        if not settings.telegram_allowed_user_ids and not settings.whatsapp_allowed_numbers:
+            log.warning("Allowlists are empty - every Telegram/WhatsApp user will be refused")
+        scheduler = start_retention_scheduler(settings)
         app.state.ben = state
         yield
+        scheduler.shutdown(wait=False)
         tg = state.adapters.get("telegram")
         if tg is not None and hasattr(tg, "bot") and hasattr(tg.bot, "shutdown"):
             await tg.bot.shutdown()

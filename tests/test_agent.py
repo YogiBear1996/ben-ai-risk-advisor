@@ -120,3 +120,17 @@ def test_refusal_returns_polite_text(settings):
     resp.stop_reason = "refusal"
     agent = build_agent(settings, library=StubLibrary(), client=FakeAnthropic([resp]))
     assert "can't help" in agent.respond([], "x").text
+
+
+class ExplodingClient:
+    class messages:  # noqa: N801
+        @staticmethod
+        def create(**_):
+            raise TypeError("Could not resolve authentication method")
+
+
+def test_client_errors_become_polite_error_reply(settings):
+    agent = build_agent(settings, library=StubLibrary(), client=ExplodingClient())
+    result = agent.respond([], "x")
+    assert result.stop_reason == "error"
+    assert "problem" in result.text

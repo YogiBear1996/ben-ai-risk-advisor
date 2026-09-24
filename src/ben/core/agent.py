@@ -112,7 +112,7 @@ class BenAgent:
                     results.append(result)
                 # All results for one assistant turn go back in a single user message.
                 messages.append({"role": "user", "content": results})
-        except anthropic.APIError:
+        except Exception:  # API, network or credential errors: reply politely, never crash
             log.exception("Claude API call failed")
             return AgentResult(
                 text=ERROR_TEXT,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -145,6 +146,38 @@ def set_webhook(
             console.print(f"Webhook set to {url}")
 
     asyncio.run(run())
+
+
+def _parse_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+@app.command("audit-export")
+def audit_export(
+    out: Path = typer.Option(Path("data/audit_export.csv"), "--out", help="CSV file to write."),
+    since: str = typer.Option(None, help="Start date/time (ISO, UTC), e.g. 2026-01-01."),
+    until: str = typer.Option(None, help="End date/time (ISO, UTC), exclusive."),
+) -> None:
+    """Export the audit log to CSV."""
+    from ben.storage.repo import AuditRepo
+
+    count = AuditRepo(get_settings()).export_csv(out, _parse_date(since), _parse_date(until))
+    console.print(f"Exported {count} audit entries to {out}")
+
+
+@app.command()
+def cleanup() -> None:
+    """Apply data retention now (also runs daily inside `ben serve`)."""
+    from ben.storage.repo import run_retention
+
+    removed = run_retention(get_settings())
+    console.print(
+        f"Removed {removed['conversations']} conversations and "
+        f"{removed['audit_entries']} audit entries."
+    )
 
 
 if __name__ == "__main__":

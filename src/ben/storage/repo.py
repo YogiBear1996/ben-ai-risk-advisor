@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+import csv
+import json
+from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlmodel import col, delete, select
 
 from ben.config import Settings
 from ben.core.models import SourceRef
 from ben.storage.db import session_scope
-from ben.storage.models import Conversation, Message, User, utcnow
+from ben.storage.models import AuditLog, Conversation, Message, User, utcnow
 
 
 class ConversationRepo:
@@ -103,3 +106,83 @@ class ConversationRepo:
                 session.exec(delete(Conversation).where(col(Conversation.id).in_(ids)))
                 session.commit()
         return len(ids)
+
+
+AUDIT_CSV_FIELDS = [
+    "id",
+    "timestamp",
+    "channel",
+    "user_id",
+    "chat_id",
+    "status",
+    "question",
+    "answer",
+    "sources",
+    "tool_calls",
+    "unverified_ids",
+    "model",
+    "input_tokens",
+    "output_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "latency_ms",
+    "redacted",
+]
+
+
+class AuditRepo:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+
+    def record(self, entry: AuditLog) -> None:
+        with session_scope(self.settings) as session:
+            session.add(entry)
+            session.commit()
+
+    def entries(
+        self, since: datetime | None = None, until: datetime | None = None
+    ) -> list[AuditLog]:
+        query = select(AuditLog).order_by(col(AuditLog.id))
+        if since:
+            query = query.where(AuditLog.timestamp >= since)
+        if until:
+            query = query.where(AuditLog.timestamp < until)
+        with session_scope(self.settings) as session:
+            return list(session.exec(query).all())
+
+    def export_csv(
+        self, out: Path, since: datetime | None = None, until: datetime | None = None
+    ) -> int:
+        rows = self.entries(since, until)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=AUDIT_CSV_FIELDS)
+            writer.writeheader()
+            for row in rows:
+                data = row.model_dump()
+                for key in ("sources", "tool_calls", "unverified_ids"):
+                    data[key] = json.dumps(data[key], ensure_ascii=False) if data[key] else ""
+                data["timestamp"] = row.timestamp.isoformat()
+                writer.writerow({k: data.get(k) for k in AUDIT_CSV_FIELDS})
+        return len(rows)
+
+    def purge_older_than(self, days: int) -> int:
+        cutoff = utcnow() - timedelta(days=days)
+        with session_scope(self.settings) as session:
+            result = session.exec(delete(AuditLog).where(AuditLog.timestamp < cutoff))
+            session.commit()
+            return result.rowcount or 0
+
+
+def run_retention(settings: Settings) -> dict[str, int]:
+    """Apply the configured retention periods. Returns the number of rows removed."""
+    removed = {"conversations": 0, "audit_entries": 0}
+    if settings.retention_days > 0:
+        removed["conversations"] = ConversationRepo(settings).purge_older_than(
+            settings.retention_days
+        )
+    if settings.audit_retention_days > 0:
+        removed["audit_entries"] = AuditRepo(settings).purge_older_than(
+            settings.audit_retention_days
+        )
+    return removed
