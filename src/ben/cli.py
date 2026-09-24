@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import typer
@@ -9,21 +10,21 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from ben.config import get_settings
+from ben.core.models import Channel, IncomingMessage
 from ben.knowledge.ingest import ingest as run_ingest
-from ben.runtime import build_agent, build_library, build_store, configure_logging
+from ben.runtime import build_library, build_service, build_store, configure_logging
 
 app = typer.Typer(help="Ben - AI governance assistant.", no_args_is_help=True)
 console = Console()
 
 
 @app.command()
-def chat() -> None:
-    """Chat with Ben in the terminal (no channel needed)."""
+def chat(user: str = typer.Option("local", help="User ID recorded for this session.")) -> None:
+    """Chat with Ben in the terminal - same pipeline as Telegram/WhatsApp, no channel needed."""
     settings = get_settings()
     configure_logging(settings)
-    agent = build_agent(settings)
-    history: list[dict[str, str]] = []
-    console.print(f"[bold]Ben[/bold] ({settings.ben_model}). Type /reset or /quit.")
+    service = build_service(settings)
+    console.print(f"[bold]Ben[/bold] ({settings.ben_model}). Commands: /help /reset /sources /quit")
     while True:
         try:
             text = console.input("[bold cyan]you>[/bold cyan] ").strip()
@@ -33,24 +34,11 @@ def chat() -> None:
             continue
         if text in {"/quit", "/exit"}:
             break
-        if text == "/reset":
-            history.clear()
-            console.print("[dim]Conversation reset.[/dim]")
-            continue
-        result = agent.respond(history[-settings.ben_history_turns * 2 :], text)
-        history += [
-            {"role": "user", "content": text},
-            {"role": "assistant", "content": result.text},
-        ]
-        console.print(Markdown(result.text))
-        if result.sources:
-            console.print(
-                "[dim]Sources: " + "; ".join(s.label() for s in result.sources) + "[/dim]"
-            )
-        console.print(
-            f"[dim]{result.latency_ms} ms, {result.usage.input_tokens} in / "
-            f"{result.usage.output_tokens} out tokens[/dim]"
-        )
+        msg = IncomingMessage(channel=Channel.CLI, chat_id=user, user_id=user, text=text)
+        with console.status("Ben is thinking..."):
+            reply = asyncio.run(service.handle(msg))
+        if reply:
+            console.print(Markdown(reply))
 
 
 @app.command()
@@ -82,6 +70,81 @@ def frameworks() -> None:
         console.print("Library is empty - run `ben ingest` first.")
     for f in items:
         console.print(f"- {f.title} [dim]({f.source_path}, {f.doc_type}, {f.chunks} chunks)[/dim]")
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", help="Bind address."),  # noqa: S104 - container default
+    port: int = typer.Option(8000, help="Port."),
+) -> None:
+    """Run the webhook server (FastAPI + uvicorn)."""
+    import uvicorn
+
+    from ben.web.app import create_app
+
+    uvicorn.run(create_app(), host=host, port=port, proxy_headers=True, log_config=None)
+
+
+@app.command("telegram-poll")
+def telegram_poll() -> None:
+    """Run the Telegram bot with long polling (local development - no public URL needed)."""
+    from telegram import Update
+    from telegram.ext import Application, ContextTypes, MessageHandler, filters
+
+    from ben.channels.telegram import TelegramAdapter
+    from ben.web.app import AppState, process_message
+
+    settings = get_settings()
+    configure_logging(settings)
+    if not settings.telegram_bot_token:
+        raise typer.BadParameter("TELEGRAM_BOT_TOKEN is not set")
+    application = (
+        Application.builder()
+        .token(settings.telegram_bot_token.get_secret_value())
+        .concurrent_updates(True)
+        .build()
+    )
+    adapter = TelegramAdapter(application.bot)
+    state = AppState(settings, build_service(settings), {"telegram": adapter})
+
+    async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        for msg in adapter.parse_incoming(update.to_dict()):
+            await process_message(state, adapter, msg)
+
+    application.add_handler(MessageHandler(filters.ALL, on_message))
+    console.print("Polling Telegram... (Ctrl+C to stop)")
+    application.run_polling(allowed_updates=["message"])
+
+
+@app.command("set-webhook")
+def set_webhook(
+    delete: bool = typer.Option(False, "--delete", help="Remove the webhook instead."),
+) -> None:
+    """Register (or remove) the Telegram webhook at TELEGRAM_WEBHOOK_URL/webhooks/telegram."""
+    from telegram import Bot
+
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        raise typer.BadParameter("TELEGRAM_BOT_TOKEN is not set")
+    bot = Bot(settings.telegram_bot_token.get_secret_value())
+
+    async def run() -> None:
+        async with bot:
+            if delete:
+                await bot.delete_webhook()
+                console.print("Webhook removed.")
+                return
+            if not settings.telegram_webhook_url or not settings.telegram_webhook_secret:
+                raise typer.BadParameter("Set TELEGRAM_WEBHOOK_URL and TELEGRAM_WEBHOOK_SECRET")
+            url = settings.telegram_webhook_url.rstrip("/") + "/webhooks/telegram"
+            await bot.set_webhook(
+                url=url,
+                secret_token=settings.telegram_webhook_secret.get_secret_value(),
+                allowed_updates=["message"],
+            )
+            console.print(f"Webhook set to {url}")
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

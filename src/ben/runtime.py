@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 
+from ben.channels.telegram import TelegramAdapter
 from ben.config import Settings
 from ben.core.agent import BenAgent
 from ben.core.prompts import load_system_prompt
+from ben.core.service import BenService
 from ben.core.tools import ToolBox
 from ben.knowledge.embeddings import build_embedder
 from ben.knowledge.library import KnowledgeLibrary
@@ -38,3 +40,20 @@ def build_agent(settings: Settings, library: Library | None = None, client=None)
     library = library or build_library(settings)
     toolbox = ToolBox(library, top_k=settings.retrieval_top_k)
     return BenAgent(settings, toolbox, load_system_prompt(settings.prompts_dir), client=client)
+
+
+def build_service(settings: Settings, client=None) -> BenService:
+    library = build_library(settings)
+    agent = build_agent(settings, library=library, client=client)
+    return BenService(settings, agent, library)
+
+
+async def build_telegram_adapter(settings: Settings) -> TelegramAdapter:
+    from telegram import Bot
+
+    bot = Bot(settings.telegram_bot_token.get_secret_value())
+    try:
+        await bot.initialize()
+    except Exception:
+        logging.getLogger(__name__).exception("Could not initialise Telegram bot")
+    return TelegramAdapter(bot)
