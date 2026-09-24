@@ -1,0 +1,12 @@
+# TLS reverse proxy for Ben. Replace the domain; Caddy obtains a certificate automatically.
+ben.example.com {
+    encode gzip
+    # Only the webhooks and health check are exposed.
+    @allowed path /webhooks/* /health
+    handle @allowed {
+        reverse_proxy ben:8000
+    }
+    handle {
+        respond 404
+    }
+}

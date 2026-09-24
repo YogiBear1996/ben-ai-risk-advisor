@@ -134,3 +134,16 @@ def test_rrf_prefers_items_ranked_well_in_both_lists():
     a = [{"id": "x"}, {"id": "y"}, {"id": "z"}]
     b = [{"id": "y"}, {"id": "q"}]
     assert [r["id"] for r in rrf_fuse([a, b])][0] == "y"
+
+
+def test_running_library_sees_later_ingest_from_another_store(settings, kdir):
+    import time
+
+    serving = KnowledgeLibrary(settings, build_store(settings))
+    assert serving.search("impact assessment") == []  # nothing ingested yet
+    ingest(kdir, settings, build_store(settings))  # e.g. `ben ingest` in another process
+    time.sleep(0.1)
+    deadline = time.time() + 8
+    while not serving.search("impact assessment") and time.time() < deadline:
+        time.sleep(0.5)
+    assert serving.search("impact assessment")

@@ -14,7 +14,7 @@ from ben.core.tools import ToolBox
 from ben.knowledge.embeddings import build_embedder
 from ben.knowledge.library import KnowledgeLibrary
 from ben.knowledge.store import VectorStore
-from ben.knowledge.types import EmptyLibrary, Library
+from ben.knowledge.types import Library
 
 
 def configure_logging(settings: Settings) -> None:
@@ -31,10 +31,10 @@ def build_store(settings: Settings) -> VectorStore:
 
 
 def build_library(settings: Settings) -> Library:
-    if not settings.resolved_vector_dir.exists():
-        logging.getLogger(__name__).warning("No index found - run `ben ingest` first.")
-        return EmptyLibrary()
-    return KnowledgeLibrary(settings, build_store(settings))
+    library = KnowledgeLibrary(settings, build_store(settings))
+    if not library.list_frameworks():
+        logging.getLogger(__name__).warning("Library is empty - run `ben ingest`.")
+    return library
 
 
 def build_agent(settings: Settings, library: Library | None = None, client=None) -> BenAgent:

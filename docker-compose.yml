@@ -1,0 +1,31 @@
+services:
+  ben:
+    build: .
+    image: ben:latest
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      KNOWLEDGE_DIR: /knowledge
+    volumes:
+      - ben-data:/data              # SQLite DB, vector index, exports
+      - ./knowledge:/knowledge:ro   # your document library
+    ports:
+      - "127.0.0.1:8000:8000"       # local only; expose publicly via the proxy below
+    restart: unless-stopped
+
+  # Optional TLS reverse proxy: `docker compose --profile proxy up -d`
+  caddy:
+    image: caddy:2
+    profiles: ["proxy"]
+    depends_on: [ben]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+volumes:
+  ben-data:
+  caddy-data:

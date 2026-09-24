@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +101,8 @@ def rrf_fuse(ranked_lists: list[list[dict[str, Any]]], k: int = RRF_K) -> list[d
 class VectorStore:
     def __init__(self, path: Path, embedder: Embedder) -> None:
         path.mkdir(parents=True, exist_ok=True)
-        self.db = lancedb.connect(str(path))
+        # Re-check the table version periodically so a running server sees `ben ingest` updates.
+        self.db = lancedb.connect(str(path), read_consistency_interval=timedelta(seconds=5))
         self.embedder = embedder
         self._table = None
 

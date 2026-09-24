@@ -71,19 +71,3 @@ class Library(Protocol):
     def list_frameworks(self) -> list[FrameworkInfo]: ...
 
     def control_ids(self) -> set[str]: ...
-
-
-class EmptyLibrary:
-    """A library with nothing in it - used before anything has been ingested."""
-
-    def search(self, query, filters=None, top_k=None):
-        return []
-
-    def get_control(self, control_id):
-        return None
-
-    def list_frameworks(self):
-        return []
-
-    def control_ids(self):
-        return set()
