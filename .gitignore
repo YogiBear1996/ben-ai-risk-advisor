@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Ben runtime data (DB, vector index, exports)
+data/
+*.db
+.env
+reports/

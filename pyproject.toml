@@ -1,0 +1,64 @@
+[project]
+name = "ben"
+version = "0.1.0"
+description = "Ben - an AI governance assistant bot (Telegram / WhatsApp) grounded in a private document library"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.69",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-telegram-bot>=21.0",
+    "httpx>=0.27",
+    "sqlmodel>=0.0.22",
+    "pydantic-settings>=2.4",
+    "typer>=0.12",
+    "lancedb>=0.17",
+    "pyarrow>=16",
+    "fastembed>=0.4",
+    "pypdf>=5.0",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "pyyaml>=6.0",
+    "apscheduler>=3.10,<4",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+
+[project.scripts]
+ben = "ben.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+    "ruff>=0.6",
+    "reportlab>=4.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ben"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "S"]
+ignore = ["S101", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B"]
+"scripts/**" = ["S"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
