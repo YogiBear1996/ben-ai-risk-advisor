@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     # --- Retrieval ---
     embedding_backend: Literal["fastembed", "hash"] = "fastembed"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_cache_dir: Path | None = None  # defaults to data_dir/models
     retrieval_top_k: int = 6
     hybrid_search: bool = True
     chunk_max_chars: int = 1800
